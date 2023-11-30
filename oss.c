@@ -5,23 +5,93 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <time.h>
+#include <sys/msg.h>
+#include <string.h>
 
-int main() {
+#define MAX_PROC 18
+#define TOT_MEM 256
 
-	//generate key and allocate shared memory
-	int shmId;
+struct clock { // struct for clock 
+	unsigned int seconds;
+	unsigned int nanoseconds;
+};
+
+struct reqMsg { // struct for message queue
+	int processNum;
+	int instances;
+	int resource;
+};
+
+struct pageTable { // struct for page table
+	int number;
+	int size;
+	int valid;
+	int dirty;
+};
+
+struct frameTable { // struct for frame table
+	int pageNumber;
+	int inUse;
+};
+
+void help();
+
+int main(int argc, char** argv) {
+
+	int access;
+	int processNum;
+
+	char ch;
+	while((ch = getopt(argc, argv, "hm:p:")) != -1) {
+		switch(ch) {
+			case 'h':
+				help();
+				break;
+			case 'm':
+				access = atoi(strdup(optarg));
+				if (access > 1 || access < 0) {
+					fprintf(stderr, "Invalid memory access option.");
+					exit(1);
+				}
+				continue;
+			case 'p':
+				processNum = atoi(strdup(optarg));
+				if (processNum > MAX_PROC) {
+					processNum = MAX_PROC; // if process number from user exceeds 18, overwrite option and set to 18
+				}
+				continue;
+			default:
+				fprintf(stderr, "Unrecogonized options\n");
+				break;
+		}
+	}
+
+	//generate key and allocate shared memory for clock
+	struct clock * timer;
+	int clockId;
 	key_t key1 = ftok("./Makefile", 0);
-        if ((shmId = shmget(key1, sizeof(int), IPC_CREAT | 0666)) == -1) {
-                perror("oss shmId shmget");
+        if ((clockId = shmget(key1, sizeof(struct clock), IPC_CREAT | 0666)) == -1) {
+                perror("oss clockId shmget");
                 exit(1);
         }
-	int * number = shmat(shmId, NULL, 0);
-	if (number == (int*)(-1)) {
+	timer = shmat(clockId, NULL, 0);
+	if (timer == (struct clock *)(-1)) {
 		perror("oss number shmat");
 		exit(1);
 	}
+	time_t tempTime = time(NULL); // store initial time
+	timer->seconds = 0;
+	timer->nanoseconds = 0;
 
-	*number = 7;
+	// create message queue
+	key_t key2 = ftok("./user_proc.c", 0);
+	int msgId = msgget(key2, IPC_CREAT | 0666);
+	if (msgId == -1) {
+		perror("oss msgget");
+		exit(1);
+	}
+	struct reqMsg message;
 
 	pid_t pid;
 	pid = fork();
@@ -33,12 +103,29 @@ int main() {
 		exit(0);
 	}
 
-	wait(0);
+	// wait for message
+	if (msgrcv(msgId, &message, sizeof(struct reqMsg) - sizeof(long), 0, 0) == -1) {
+        	perror("msgrcv");
+                exit(1);
+        }
+	printf("Signal received from process: %d\n", message.processNum);
+
+	sleep(2);
+
+	timer->seconds = time(NULL) - tempTime;
+	timer->nanoseconds = (time(NULL) - tempTime) * 1000000000;
 
 	printf("OSS Program\n");
-	printf("Number: %d\n", *number);
+	printf("Seconds: %d Nanoseconds: %d\n", timer->seconds, timer->nanoseconds);
 
 	// free memory
-	shmctl(shmId, IPC_RMID, NULL);
+	shmctl(clockId, IPC_RMID, NULL);
+	msgctl(msgId, IPC_RMID, NULL);
 
+	return 0;
+}
+
+void help() {
+	printf("Help function\n");
+	exit(0);
 }
