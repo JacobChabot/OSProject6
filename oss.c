@@ -19,8 +19,8 @@ struct clock { // struct for clock
 
 struct reqMsg { // struct for message queue
 	int processNum;
-	int instances;
-	int resource;
+	int address;
+	int operation; // read = 0, write = 1
 };
 
 struct pageTable { // struct for page table
@@ -36,6 +36,7 @@ struct frameTable { // struct for frame table
 };
 
 void help();
+void logFile();
 
 int main(int argc, char** argv) {
 
@@ -93,6 +94,8 @@ int main(int argc, char** argv) {
 	}
 	struct reqMsg message;
 
+	struct pageTable pageTableArray[32]; // array for page tables
+
 	pid_t pid;
 	pid = fork();
 	if (pid == 0) {
@@ -108,8 +111,8 @@ int main(int argc, char** argv) {
         	perror("msgrcv");
                 exit(1);
         }
-	printf("Signal received from process: %d\n", message.processNum);
-
+	printf("Signal received from process: %d requesting address %05d for operation %d\n", message.processNum, message.address, message.operation);
+	logFile();
 	sleep(2);
 
 	timer->seconds = time(NULL) - tempTime;
@@ -128,4 +131,28 @@ int main(int argc, char** argv) {
 void help() {
 	printf("Help function\n");
 	exit(0);
+}
+
+void logFile() {
+	printf("Log file function\n");
+	
+	// open input file
+	FILE * file = NULL;
+	file = fopen("logfile", "a");
+	if (file == NULL) {
+		fprintf(stderr, "Invalid input file name\n");
+		exit(0);
+	}
+
+	// get time in HH:MM:SS format
+        time_t currentTime;
+        struct tm * timeInfo;
+        char timeString[9];
+        time(&currentTime);
+        timeInfo = localtime(&currentTime);
+        strftime(timeString, sizeof(timeString), "%H:%M:%S", timeInfo);
+
+	fprintf(file, "OSS at %s\n", timeString);
+
+	fclose(file);
 }
