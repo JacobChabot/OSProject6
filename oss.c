@@ -14,6 +14,7 @@
 
 #define MAX_PROC 18
 #define TOT_MEM 256
+#define MAX_PAGES 10
 
 struct clock { // struct for clock 
 	unsigned int seconds;
@@ -33,20 +34,21 @@ struct reqMsg { // struct for message queue
 
 struct pageTable { // struct for page table
 	int pageNumber;
-	int size;
-	int valid;
+	int frame;
+	bool valid;
 	int dirty;
 };
 
 struct frameTable { // struct for frame tablei
 	int frameNumber;
-	int inUse;
+	bool inUse;
 };
 
 void help();
 void logFile(int, int, int, int);
-void updatePageTable(struct pageTable [], int, int);
-void updateFrameTable(struct frameTable [], int, int);
+bool checkAvail(struct frameTable [], int);
+void updatePageTable(struct pageTable [][MAX_PAGES], int, int);
+void updateFrameTable(struct frameTable [], int);
 void forkChild(int, int);
 
 int main(int argc, char** argv) {
@@ -96,7 +98,8 @@ int main(int argc, char** argv) {
 	time_t tempTime = time(NULL); // store initial time
 	timer->seconds = 0;
 	timer->nanoseconds = 0;
-
+	sleep(1);
+	
 	// create message queue
 	key_t key2 = ftok("./user_proc.c", 0);
 	int msgId = msgget(key2, IPC_CREAT | 0666);
@@ -119,21 +122,25 @@ int main(int argc, char** argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	struct pageTable pageTableArray[32]; // array for page tables
-	struct frameTable frameTableArray[32];
-	for (int i = 0; i < 32; i++) {
-		pageTableArray[i].pageNumber = i;
-		pageTableArray[i].size = 1; // 1k
+	int maxMem = TOT_MEM * 1000;
+	struct pageTable pageTableArray[processNum][MAX_PAGES]; // array for page tables
+	struct frameTable frameTableArray[TOT_MEM]; // 256 total frames of size 1k each, total memory 256k 
+	for (int i = 0; i < processNum; i++) {
+		for (int j = 0; j < MAX_PAGES; j++) {
+			pageTableArray[i][j].pageNumber = j;
+		}	
+			
 	}
 
 	bool stillRun = true;
 	int pcount = 0;
 	int forkTime = (rand() % 500) + 1; // time variable to fork
 	int stopwatch = 1; // timer to fork in ms
+	timer->seconds = time(NULL) - tempTime;
 	while (stillRun) {
 		//printf("while loop in oss\n");	
 		timer->seconds = time(NULL) - tempTime; // update clock
-                timer->nanoseconds = (time(NULL) - tempTime) * 1000000000;
+                timer->nanoseconds = timer->seconds * 1000000000;
 		
 		stopwatch++;
 		// set up forking at random times
@@ -155,31 +162,63 @@ int main(int argc, char** argv) {
 		}
 		else { // message received
 			printf("Signal received from process: %d requesting address %05d for operation %d\n", rmessage.processNum, rmessage.address, rmessage.operation);
+			
+			srand(time(NULL));
+			int random = rand() % 256; // generate a random frame number
+			//type: request = 0, giving = 1, fault = 2
 			logFile(0, rmessage.processNum, rmessage.address, 0); // void logFile(int type, int pnum, int address, int frame)
-			updatePageTable(pageTableArray, rmessage.processNum, rmessage.address);
-			sleep(2);
-			logFile(1, rmessage.processNum, rmessage.address, 0);
+			if (checkAvail(frameTableArray, random)) { // if frame is available, assign that process to the frame
+				printf("checkAvail returned true\n");
+				updatePageTable(pageTableArray, rmessage.processNum, random);
+				updateFrameTable(frameTableArray, random);
+				sleep(1);
+				logFile(1, rmessage.processNum, rmessage.address, random);
+			}
+			
 			if (kill(block[rmessage.processNum].pid, SIGCONT) == -1) { // signal to process it can continue
                                 perror("kill");
                                 exit(EXIT_FAILURE);
                        	}
 		}
 		//sleep(1);
-
-		for (int i = 0; i < processNum; i++) {
-			int result = kill(block[i].pid, 0);
-			if (result == 0)
-				break;
-			if (i == processNum)
-				stillRun = false; // no child processes running so stop loop
-		}
-
+		
+		if (timer->seconds > 60) 
+			break;
         }
-
 
 	// free memory
 	shmctl(clockId, IPC_RMID, NULL);
+	shmctl(blockId, IPC_RMID, NULL);
 	msgctl(msgId, IPC_RMID, NULL);
+
+	// open input file
+        FILE * file = NULL;
+        file = fopen("logfile", "a");
+        if (file == NULL) {
+                fprintf(stderr, "Invalid input file name\n");
+                exit(0);
+        }
+
+        // get time in HH:MM:SS format
+        time_t currentTime;
+        struct tm * timeInfo;
+        char timeString[9];
+        time(&currentTime);
+        timeInfo = localtime(&currentTime);
+        strftime(timeString, sizeof(timeString), "%H:%M:%S", timeInfo);
+
+	fprintf(file, "\nCurrent memory layout at time %s is: \n", timeString);
+	for (int i = 0; i < TOT_MEM; i++) {
+	       fprintf(file, "Frame %d: ", i);
+	       if (frameTableArray[i].inUse)
+		      fprintf(file, "Yes\n");
+	       else 
+		      fprintf(file, "No\n"); 
+	}	       
+
+
+        fclose(file);
+
 
 	return 0;
 }
@@ -189,12 +228,21 @@ void help() {
 	exit(0);
 }
 
-void updatePageTable(struct pageTable pageTablearray[], int pnum, int address) {
+void updatePageTable(struct pageTable pageTableArray[][MAX_PAGES], int pnum, int frame) {
 	printf("Update Page Table Function\n");
+	srand(time(NULL));
+        int random = (rand() % 10) + 1;
+	pageTableArray[pnum][random].frame = frame; // assign a frame to a random page
+	pageTableArray[pnum][random].valid = true; // assign the address to a random page
 }
 
-void updateFrameTable(struct frameTable frameTableArray[], int pnum, int address) {
+void updateFrameTable(struct frameTable frameTableArray[], int frame) {
 	printf("Update frame table function\n");
+}
+
+
+bool checkAvail(struct frameTable frameTableArray[256], int frame) {
+	return true;
 }
 
 void logFile(int type, int pnum, int address, int frame) {
