@@ -42,6 +42,7 @@ struct pageTable { // struct for page table
 struct frameTable { // struct for frame tablei
 	int frameNumber;
 	bool inUse;
+	int ref; //reference bit
 };
 
 void help();
@@ -125,6 +126,10 @@ int main(int argc, char** argv) {
 	int maxMem = TOT_MEM * 1000;
 	struct pageTable pageTableArray[processNum][MAX_PAGES]; // array for page tables
 	struct frameTable frameTableArray[TOT_MEM]; // 256 total frames of size 1k each, total memory 256k 
+	for (int i = 0; i < TOT_MEM; i++) {
+		frameTableArray[i].ref = 1; // set reference bit initially to one
+		frameTableArray[i].inUse = false;
+	}
 	for (int i = 0; i < processNum; i++) {
 		for (int j = 0; j < MAX_PAGES; j++) {
 			pageTableArray[i][j].pageNumber = j;
@@ -132,16 +137,18 @@ int main(int argc, char** argv) {
 			
 	}
 
-	bool stillRun = true;
 	int pcount = 0;
 	int forkTime = (rand() % 500) + 1; // time variable to fork
 	int stopwatch = 1; // timer to fork in ms
 	timer->seconds = time(NULL) - tempTime;
-	while (stillRun) {
-		//printf("while loop in oss\n");	
+	time_t start_time, current_time;
+	time(&start_time);
+
+	while (true) {
 		timer->seconds = time(NULL) - tempTime; // update clock
                 timer->nanoseconds = timer->seconds * 1000000000;
-		
+		time(&current_time);
+
 		stopwatch++;
 		// set up forking at random times
 		if (pcount < processNum)
@@ -159,16 +166,20 @@ int main(int argc, char** argv) {
 				perror("msgrcv");
 				exit(1);
 			}
+			else { // if ENOMSG was thrown, begin timer, if no memory request for 10 secs, break loop
+				if (difftime(current_time, start_time) >= 30.0) {
+					printf("No more memory requests\n");
+					break;
+				}
+			}
 		}
 		else { // message received
-			printf("Signal received from process: %d requesting address %05d for operation %d\n", rmessage.processNum, rmessage.address, rmessage.operation);
-			
 			srand(time(NULL));
 			int random = rand() % 256; // generate a random frame number
-			//type: request = 0, giving = 1, fault = 2
+			
 			logFile(0, rmessage.processNum, rmessage.address, 0); // void logFile(int type, int pnum, int address, int frame)
 			if (checkAvail(frameTableArray, random)) { // if frame is available, assign that process to the frame
-				printf("checkAvail returned true\n");
+				
 				updatePageTable(pageTableArray, rmessage.processNum, random);
 				updateFrameTable(frameTableArray, random);
 				sleep(1);
@@ -180,9 +191,9 @@ int main(int argc, char** argv) {
                                 exit(EXIT_FAILURE);
                        	}
 		}
-		//sleep(1);
 		
-		if (timer->seconds > 60) 
+		// breaks loop after 200 seconds
+		if (timer->seconds > 200) 
 			break;
         }
 
@@ -191,7 +202,7 @@ int main(int argc, char** argv) {
 	shmctl(blockId, IPC_RMID, NULL);
 	msgctl(msgId, IPC_RMID, NULL);
 
-	// open input file
+	// open input file to write frame table
         FILE * file = NULL;
         file = fopen("logfile", "a");
         if (file == NULL) {
@@ -224,12 +235,12 @@ int main(int argc, char** argv) {
 }
 
 void help() {
-	printf("Help function\n");
+	printf("This program simulates memory management\n");
+	printf("Commands: '-p <number of processes>' '-m <memory option>'\n");
 	exit(0);
 }
 
 void updatePageTable(struct pageTable pageTableArray[][MAX_PAGES], int pnum, int frame) {
-	printf("Update Page Table Function\n");
 	srand(time(NULL));
         int random = (rand() % 10) + 1;
 	pageTableArray[pnum][random].frame = frame; // assign a frame to a random page
@@ -237,12 +248,18 @@ void updatePageTable(struct pageTable pageTableArray[][MAX_PAGES], int pnum, int
 }
 
 void updateFrameTable(struct frameTable frameTableArray[], int frame) {
-	printf("Update frame table function\n");
+	frameTableArray[frame].inUse = true;
 }
 
 
 bool checkAvail(struct frameTable frameTableArray[256], int frame) {
-	return true;
+	if (frameTableArray[frame].inUse == false)
+		if (frameTableArray[frame].ref == 0)
+			return true; // if frame is not in use and ref bit is 0, return true
+		else {
+			frameTableArray[frame].ref = 0;
+			return checkAvail(frameTableArray, frame + 1); // if frame's ref bit is 1, set bit to 0 recall function with the frame number increased by one
+		}
 }
 
 void logFile(int type, int pnum, int address, int frame) {
@@ -280,8 +297,6 @@ void forkChild(int pcount, int processNum) {
 	snprintf(temp, sizeof(temp), "%d", pcount);
 	snprintf(nTemp, sizeof(nTemp), "%d", processNum);
 	
-	printf("execute child\n");
-
 	pid_t pid = fork();
 	if (pid == 0) { // if child, execute user program and termiante
 		if (execl("./user_proc.out", "./user_proc.out", temp, nTemp, NULL) == -1) {
